@@ -367,19 +367,26 @@ pub(crate) fn claim_refund(env: &Env, campaign_id: u32, contributor: Address) ->
     remove_revenue_claimed(env, campaign_id, &contributor);
     remove_personal_cap(env, campaign_id, &contributor);
 
-    decrement_contributor_count(env, campaign_id);
+    decrement_contributor_count(env, campaign_id)?;
 
-    campaign.effective_amount_raised = campaign
-        .effective_amount_raised
-        .checked_sub(amount)
-        .ok_or(Error::Overflow)?;
-    set_campaign(env, campaign_id, &campaign);
+    // #819: For cancelled campaigns effective_amount_raised was already zeroed
+    // at cancel time. Only decrement here for the failed-funding path
+    // (deadline passed, goal not met).
+    if !campaign.is_cancelled {
+        campaign.effective_amount_raised = campaign
+            .effective_amount_raised
+            .checked_sub(amount)
+            .ok_or(Error::Overflow)?;
+        set_campaign(env, campaign_id, &campaign);
+    }
 
-    let total_raised = get_total_raised_global(env);
-    set_total_raised_global(
-        env,
-        total_raised.checked_sub(amount).ok_or(Error::Overflow)?,
-    );
+    if !campaign.is_cancelled {
+        let total_raised = get_total_raised_global(env);
+        set_total_raised_global(
+            env,
+            total_raised.checked_sub(amount).ok_or(Error::Overflow)?,
+        );
+    }
 
     let client = campaign_token_client(env, campaign_id);
     client.transfer(&env.current_contract_address(), &contributor, &amount);
